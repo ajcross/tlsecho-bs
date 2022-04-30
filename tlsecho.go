@@ -98,6 +98,13 @@ var fmap template.FuncMap = template.FuncMap{
 		})
 		return certPEM
 	},
+	"DidResume": func(conn tls.Conn) string {
+		if conn.ConnectionState().DidResume {
+			return "true"
+		} else {
+			return "false"
+		}
+	},
 	"KeyUsage": func(keyusage x509.KeyUsage) string {
 		var kusage string
 		if keyusage&x509.KeyUsageDigitalSignature != 0 {
@@ -140,6 +147,7 @@ SupportedVersions: {{ range .SupportedVersions }} {{ . | TLSVersion }}{{ end }}
 SupportedProtos:   {{ range .SupportedProtos }} {{ . }}{{ end }}
 CipherSuites:      {{ range .CipherSuites }} {{ . | CipherSuiteName }}{{ end }}
 RemoteAddr:        {{ .Conn.RemoteAddr }}
+
 `
 	t := template.Must(template.New("temp").Funcs(fmap).Parse(temp))
 	return t
@@ -154,7 +162,8 @@ RemoteAddr: {{.RemoteAddr}}
 ServerName:         {{ .TLS.ServerName }}
 Version:            {{ .TLS.Version | TLSVersion }}
 NegociatedProtocol: {{ .TLS.NegotiatedProtocol }}
-CipherSuite:        {{.TLS.CipherSuite | CipherSuiteName }} 
+CipherSuite:        {{ .TLS.CipherSuite | CipherSuiteName }} 
+DidResume:          {{ .TLS.DidResume }}
 {{ range .TLS.PeerCertificates }}
  Subject:      {{ .Subject }}
  Issuer:       {{ .Issuer }}
@@ -221,6 +230,9 @@ func main() {
 				log.Printf(err.Error(), http.StatusInternalServerError)
 			}
 			delete(addressHelloMap, r.RemoteAddr)
+			for key, _ := range addressHelloMap {
+				log.Printf("Key: %s\n", key)
+			}
 		}
 		err = httpTemplate.Execute(w, r)
 		if err != nil {
