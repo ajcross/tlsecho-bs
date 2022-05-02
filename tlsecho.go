@@ -227,7 +227,7 @@ func main() {
 	var setCookie bool
 
 	flag.StringVar(&keyFile, "key", "", "Certificate key file")
-	flag.String(&certFile, "cert", "", "Certificate file")
+	flag.StringVar(&certFile, "cert", "", "Certificate file")
 	flag.StringVar(&addr, "addr", ":8443", "service address")
 	flag.BoolVar(&verbose, "verbose", true, "verbose")
 	flag.BoolVar(&verbose, "v", true, "verbose")
@@ -244,6 +244,9 @@ func main() {
 	}
 	if keyFile != "" && !useTLS {
 		usageAndExit("tls disabled and tls credentials set is not supported")
+	}
+	if keyFile != "" && cn != "" {
+		usageAndExit("you can't set cn and certificate files at the same time")
 	}
 
 	var addressHelloMap = make(map[string]*tls.ClientHelloInfo)
