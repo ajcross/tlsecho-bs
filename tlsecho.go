@@ -218,30 +218,33 @@ func (ml myListener) Accept() (net.Conn, error) {
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	keyFileFlag := flag.String("key", "", "key file")
-	certFileFlag := flag.String("cert", "", "cert file")
-	addrFlag := flag.String("addr", ":8443", "service address")
-	verboseShortFlag := flag.Bool("verbose", true, "verbose")
-	verboseLongFlag := flag.Bool("v", false, "verbose")
-	tlsFlag := flag.Bool("tls", true, "tls")
-	cnFlag := flag.String("cn", "localhost", "cn of the generated certificate")
-	cookieFlag := flag.Bool("set-cookie", true, "set cookie")
+
+	var keyFile, certFile string
+	var addr string
+	var verbose bool
+	var useTLS bool
+	var cn string
+	var setCookie bool
+
+	flag.StringVar(&keyFile, "key", "", "Certificate key file")
+	flag.String(&certFile, "cert", "", "Certificate file")
+	flag.StringVar(&addr, "addr", ":8443", "service address")
+	flag.BoolVar(&verbose, "verbose", true, "verbose")
+	flag.BoolVar(&verbose, "v", true, "verbose")
+	flag.BoolVar(&useTLS, "tls", true, "tls")
+	flag.StringVar(&cn, "cn", "localhost", "cn of the generated certificate")
+	flag.BoolVar(&setCookie, "set-cookie", true, "set cookie")
+
 	flag.Parse()
 	if flag.NArg() != 0 {
 		usageAndExit("Extra arguments not supported")
 	}
-	if (*keyFileFlag == "") != (*certFileFlag == "") {
-		usageAndExit("keyfile and certfile must be both specified or none")
+	if (keyFile == "") != (certFile == "") {
+		usageAndExit("keyfile and certfile set both or none")
 	}
-	if *keyFileFlag != "" && !*tlsFlag {
+	if keyFile != "" && !useTLS {
 		usageAndExit("tls disabled and tls credentials set is not supported")
 	}
-	verbose := (*verboseShortFlag || *verboseLongFlag)
-	useTLS := *tlsFlag
-	keyFile := *keyFileFlag
-	certFile := *certFileFlag
-	addr := *addrFlag
-	setCookie := *cookieFlag
 
 	var addressHelloMap = make(map[string]*tls.ClientHelloInfo)
 
@@ -278,7 +281,7 @@ func main() {
 		var certificate tls.Certificate
 		var err error
 		if keyFile == "" {
-			certificate, err = genX509KeyPair(*cnFlag)
+			certificate, err = genX509KeyPair(cn)
 		} else {
 			certificate, err = tls.LoadX509KeyPair(certFile, keyFile)
 		}
