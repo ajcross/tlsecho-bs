@@ -225,6 +225,7 @@ func main() {
 	verboseLongFlag := flag.Bool("v", false, "verbose")
 	tlsFlag := flag.Bool("tls", true, "tls")
 	cnFlag := flag.String("cn", "localhost", "cn of the generated certificate")
+	cookieFlag := flag.Bool("set-cookie", true, "set cookie")
 	flag.Parse()
 	if flag.NArg() != 0 {
 		usageAndExit("Extra arguments not supported")
@@ -240,6 +241,7 @@ func main() {
 	keyFile := *keyFileFlag
 	certFile := *certFileFlag
 	addr := *addrFlag
+	setCookie := *cookieFlag
 
 	var addressHelloMap = make(map[string]*tls.ClientHelloInfo)
 
@@ -248,7 +250,13 @@ func main() {
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		var err error
-
+		if setCookie {
+			cookie := &http.Cookie{
+				Name:  "cookie",
+				Value: "Cookies are delicious delicacies",
+			}
+			http.SetCookie(w, cookie)
+		}
 		if useTLS {
 			err = helloTemplate.Execute(w, addressHelloMap[r.RemoteAddr])
 			if err != nil {
