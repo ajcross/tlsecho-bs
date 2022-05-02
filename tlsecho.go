@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"text/template"
@@ -191,6 +192,30 @@ func usageAndExit(error string) {
 	os.Exit(-2)
 }
 
+type myListener struct {
+	net.Listener
+	addressHelloMap map[string]*tls.ClientHelloInfo
+}
+
+type myConn struct {
+	net.Conn
+	addressHelloMap map[string]*tls.ClientHelloInfo
+}
+
+func (mc myConn) Close() (e error) {
+	delete(mc.addressHelloMap, mc.RemoteAddr().String())
+	return net.Conn.Close(mc.Conn)
+}
+
+func (ml myListener) Accept() (net.Conn, error) {
+	c, e := net.Listener.Accept(ml.Listener)
+	mc := myConn{
+		c,
+		ml.addressHelloMap,
+	}
+	return mc, e
+}
+
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	keyFileFlag := flag.String("key", "", "key file")
@@ -223,15 +248,12 @@ func main() {
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		var err error
+
 		if useTLS {
 			err = helloTemplate.Execute(w, addressHelloMap[r.RemoteAddr])
 			if err != nil {
 				fmt.Fprintf(w, err.Error(), http.StatusInternalServerError)
 				log.Printf(err.Error(), http.StatusInternalServerError)
-			}
-			delete(addressHelloMap, r.RemoteAddr)
-			for key, _ := range addressHelloMap {
-				log.Printf("Key: %s\n", key)
 			}
 		}
 		err = httpTemplate.Execute(w, r)
@@ -271,8 +293,20 @@ func main() {
 			Addr:      addr,
 			TLSConfig: config,
 		}
+		var ml myListener
+		var l net.Listener
+
+		l, err = net.Listen("tcp", addr)
+		if err != nil {
+			log.Fatal(err)
+		}
+		ml = myListener{
+			l,
+			addressHelloMap,
+		}
+
 		log.Printf("HTTPS server listening on %s", addr)
-		log.Fatal(httpServer.ListenAndServeTLS("", ""))
+		log.Fatal(httpServer.ServeTLS(ml, "", ""))
 	} else {
 		httpServer := &http.Server{
 			Addr: addr,
