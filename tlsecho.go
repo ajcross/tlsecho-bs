@@ -135,9 +135,12 @@ var fmap template.FuncMap = template.FuncMap{
 		if keyusage&x509.KeyUsageDecipherOnly != 0 {
 			kusage += "KeyUsageDecipherOnly "
 		}
-
 		return kusage
 	},
+        "LocalAddr": func(req *http.Request) string {
+                return req.Context().Value(http.LocalAddrContextKey).(net.Addr).String()
+        },
+
 }
 
 func getTLSHelloTemplate() *template.Template {
@@ -158,6 +161,7 @@ func getTemplate() *template.Template {
 	const temp = `
 -- Connection --
 RemoteAddr: {{.RemoteAddr}}
+LocalAddr: {{ . | LocalAddr }}
 {{ if .TLS }}
 --  TLS  --
 ServerName:         {{ .TLS.ServerName }}
