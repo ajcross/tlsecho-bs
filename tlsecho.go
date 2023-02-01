@@ -17,7 +17,25 @@ import (
 	"os"
 	"text/template"
 	"time"
+	"strings"
 )
+
+type EnvVar struct {
+	Name, Value string
+}
+func getEnvVars(prefix string)  []EnvVar {
+	// loads all the env variables that start with the prefix given
+
+	envvars := []EnvVar{}
+	for  _, env := range os.Environ() {
+		if strings.HasPrefix(env, prefix) {
+			envvar := strings.SplitN(env,"=",2)
+			e := EnvVar{envvar[0],envvar[1]}
+			envvars = append(envvars, e)
+		}
+        }
+	return envvars
+}
 
 func genCertificate(cn string, certPrivKey *rsa.PrivateKey) []byte {
 	cert := &x509.Certificate{
@@ -151,8 +169,17 @@ SupportedVersions: {{ range .SupportedVersions }} {{ . | TLSVersion }}{{ end }}
 SupportedProtos:   {{ range .SupportedProtos }} {{ . }}{{ end }}
 CipherSuites:      {{ range .CipherSuites }} {{ . | CipherSuiteName }}{{ end }}
 RemoteAddr:        {{ .Conn.RemoteAddr }}
-
 `
+	t := template.Must(template.New("temp").Funcs(fmap).Parse(temp))
+	return t
+}
+
+func getEnvVarTemplate() *template.Template {
+	const temp = `
+-- Environment --
+{{ range $envvar := . }}{{ $envvar.Name }}: {{ $envvar.Value }}
+{{end}}`
+
 	t := template.Must(template.New("temp").Funcs(fmap).Parse(temp))
 	return t
 }
@@ -185,8 +212,8 @@ Method: {{ .Method }}
 URI: {{ .RequestURI }}
 Headers:
 {{ range $key, $values := .Header }}{{ range $value := $values }}  {{ $key }}: {{ $value }} 
-{{end}}{{end}}
-`
+{{end}}{{end}}`
+
 	t := template.Must(template.New("temp").Funcs(fmap).Parse(temp))
 	return t
 }
@@ -224,6 +251,7 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	var keyFile, certFile string
+	var envprefix string
 	var addr string
 	var verbose bool
 	var useTLS bool
@@ -238,6 +266,7 @@ func main() {
 	flag.BoolVar(&useTLS, "tls", true, "tls")
 	flag.StringVar(&cn, "cn", "localhost", "cn of the generated certificate")
 	flag.BoolVar(&setCookie, "set-cookie", true, "set cookie")
+	flag.StringVar(&envprefix, "env-prefix", "TLSECHO", "environent variables prefix to return")
 
 	flag.Parse()
 	if flag.NArg() != 0 {
@@ -258,6 +287,9 @@ func main() {
 	helloTemplate := getTLSHelloTemplate()
 	httpTemplate := getTemplate()
 
+	envvarsTemplate := getEnvVarTemplate()
+	envvars := getEnvVars(envprefix)
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		var err error
 		if setCookie {
@@ -274,12 +306,20 @@ func main() {
 				log.Printf(err.Error(), http.StatusInternalServerError)
 			}
 		}
+		if len(envvars) > 0 {
+			err= envvarsTemplate.Execute(w, envvars)
+			if err != nil {
+				fmt.Fprintf(w, err.Error(), http.StatusInternalServerError)
+				log.Printf(err.Error(), http.StatusInternalServerError)
+			} else if verbose {
+				envvarsTemplate.Execute(log.Writer(), envvars)
+			}
+		}
 		err = httpTemplate.Execute(w, r)
 		if err != nil {
 			fmt.Fprintf(w, err.Error(), http.StatusInternalServerError)
 			log.Printf(err.Error(), http.StatusInternalServerError)
-		}
-		if verbose {
+		} else if  verbose {
 			httpTemplate.Execute(log.Writer(), r)
 		}
 	})
@@ -302,6 +342,7 @@ func main() {
 			GetCertificate: func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
 				addressHelloMap[chi.Conn.RemoteAddr().String()] = chi
 				if verbose {
+					// with TLS, log the hello info as soon as it arrives, just in case the connection is aborted
 					helloTemplate.Execute(log.Writer(), chi)
 				}
 				return &certificate, nil
