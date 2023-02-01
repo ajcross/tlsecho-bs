@@ -42,7 +42,7 @@ Usage of ./tlsecho:
 
 ## Enviroment variables and kubernetes
 
-tlsecho returns (and logs) environment variables that match a prefix. This can be use to report the node or the pod serving the request. 
+tlsecho returns (and logs) environment variables that match a prefix. This can be used in kuberentes to report the node or the pod serving the request. 
 
 For a Deployment definiton example (with no tls):
 
