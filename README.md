@@ -27,7 +27,7 @@ Usage of ./tlsecho:
     	Certificate file
   -cn string
     	cn of the generated certificate (default "localhost")
-  -envprefix string
+  -env-prefix string
     	environent variables prefix to return (default "TLSECHO")
   -key string
     	Certificate key file
