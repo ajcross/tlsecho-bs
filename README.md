@@ -14,21 +14,23 @@ go build -o tlsecho tlsecho.go
 
 docker image for amd64 and arm64 can be found at 
 
-`docker.io/ajcross/tlsecho:latest`
+```
+docker.io/ajcross/tlsecho:latest
+```
 
 ## Usage
 
 ```
-# ./tlsecho --help
-Usage of ./tlsecho:
+# tlsecho --help
+Usage of tlsecho:
   -addr string
     	service address (default ":8443")
   -cert string
     	Certificate file
   -cn string
     	cn of the generated certificate (default "localhost")
-  -env-prefix string
-    	environent variables prefix to return (default "TLSECHO")
+  -env-re string
+    	regexp to filter environment variables to output (default "^TLSECHO")
   -key string
     	Certificate key file
   -set-cookie
@@ -42,16 +44,14 @@ Usage of ./tlsecho:
 
 ## Enviroment variables and kubernetes
 
-tlsecho returns (and logs) environment variables that match a prefix. This can be used in kuberentes to report the node or the pod serving the request. 
+tlsecho returns (and logs) environment variables that match a regexp. This can be used in kubernetes to report the node or the pod serving the request. 
 
-For a Deployment definiton example (with no tls):
+Deployment definiton example (with tls disabled):
 
-````
+```
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  creationTimestamp: null
-  namespace: foo
   labels:
     app: example
   name: example
@@ -60,10 +60,8 @@ spec:
   selector:
     matchLabels:
       app: example
-  strategy: {}
   template:
     metadata:
-      creationTimestamp: null
       labels:
         app: example
     spec:
@@ -73,7 +71,7 @@ spec:
         ports:
         - containerPort: 8080
         resources: {}
-        args: ["/app/tlsecho","--addr",":8080","-tls=false","--env-prefix=K_"]
+        args: ["/app/tlsecho","--addr",":8080","-tls=false","--env-re=^K_"]
         env:
           - name: K_NODE
             valueFrom:
@@ -95,4 +93,5 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: spec.serviceAccountName
+```
 

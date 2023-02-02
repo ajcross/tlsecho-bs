@@ -18,18 +18,26 @@ import (
 	"text/template"
 	"time"
 	"strings"
+	"regexp"
 )
 
 type EnvVar struct {
 	Name, Value string
 }
-func getEnvVars(prefix string)  []EnvVar {
-	// loads all the env variables that start with the prefix given
+func getEnvVars(res string)  []EnvVar {
+	// loads all the env variables that match a regexp
 
 	envvars := []EnvVar{}
+
+	re,err := regexp.Compile(res)
+	if err != nil {
+		log.Println(err)
+		return envvars
+	}
+
 	for  _, env := range os.Environ() {
-		if strings.HasPrefix(env, prefix) {
-			envvar := strings.SplitN(env,"=",2)
+		envvar := strings.SplitN(env,"=",2)
+		if re.MatchString(envvar[0]) {
 			e := EnvVar{envvar[0],envvar[1]}
 			envvars = append(envvars, e)
 		}
@@ -251,7 +259,7 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	var keyFile, certFile string
-	var envprefix string
+	var envre string
 	var addr string
 	var verbose bool
 	var useTLS bool
@@ -266,20 +274,20 @@ func main() {
 	flag.BoolVar(&useTLS, "tls", true, "tls")
 	flag.StringVar(&cn, "cn", "localhost", "cn of the generated certificate")
 	flag.BoolVar(&setCookie, "set-cookie", true, "set cookie")
-	flag.StringVar(&envprefix, "env-prefix", "TLSECHO", "environent variables prefix to return")
+	flag.StringVar(&envre, "env-re", "^TLSECHO", "regexp to filter environment variables to output")
 
 	flag.Parse()
 	if flag.NArg() != 0 {
 		usageAndExit("Extra arguments not supported")
 	}
 	if (keyFile == "") != (certFile == "") {
-		usageAndExit("keyfile and certfile set both or none")
+		usageAndExit("keyfile and certfile, set both or none")
 	}
 	if keyFile != "" && !useTLS {
 		usageAndExit("tls disabled and tls credentials set is not supported")
 	}
 	if keyFile != "" && cn != "" {
-		usageAndExit("you can't set cn and certificate files at the same time")
+		usageAndExit("you can't set both cn and certificate files")
 	}
 
 	var addressHelloMap = make(map[string]*tls.ClientHelloInfo)
@@ -288,7 +296,13 @@ func main() {
 	httpTemplate := getTemplate()
 
 	envvarsTemplate := getEnvVarTemplate()
-	envvars := getEnvVars(envprefix)
+	envvars := getEnvVars(envre)
+	if len(envvars) > 0 && verbose {
+		err := envvarsTemplate.Execute(log.Writer(), envvars)
+		if err != nil {
+			log.Printf(err.Error())
+		}
+	}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		var err error
