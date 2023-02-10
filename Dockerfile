@@ -1,8 +1,8 @@
 FROM golang as builder
 RUN mkdir  /build
 WORKDIR /build
-COPY *go /build
-RUN CGO_ENABLED=0 go build -o tlsecho *.go
+COPY *go *.mod /build
+RUN CGO_ENABLED=0 go build 
 FROM alpine
 EXPOSE 8443/tcp
 RUN mkdir /app
