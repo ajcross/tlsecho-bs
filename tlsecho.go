@@ -10,38 +10,40 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"net"
 	"net/http"
 	"os"
+	"regexp"
+	"strings"
 	"text/template"
 	"time"
-	"strings"
-	"regexp"
 )
 
 type EnvVar struct {
 	Name, Value string
 }
-func getEnvVars(res string)  []EnvVar {
+
+func getEnvVars(res string) []EnvVar {
 	// loads all the env variables that match a regexp
 
 	envvars := []EnvVar{}
 
-	re,err := regexp.Compile(res)
+	re, err := regexp.Compile(res)
 	if err != nil {
 		log.Println(err)
 		return envvars
 	}
 
-	for  _, env := range os.Environ() {
-		envvar := strings.SplitN(env,"=",2)
+	for _, env := range os.Environ() {
+		envvar := strings.SplitN(env, "=", 2)
 		if re.MatchString(envvar[0]) {
-			e := EnvVar{envvar[0],envvar[1]}
+			e := EnvVar{envvar[0], envvar[1]}
 			envvars = append(envvars, e)
 		}
-        }
+	}
 	return envvars
 }
 
@@ -163,10 +165,9 @@ var fmap template.FuncMap = template.FuncMap{
 		}
 		return kusage
 	},
-        "LocalAddr": func(req *http.Request) string {
-                return req.Context().Value(http.LocalAddrContextKey).(net.Addr).String()
-        },
-
+	"LocalAddr": func(req *http.Request) string {
+		return req.Context().Value(http.LocalAddrContextKey).(net.Addr).String()
+	},
 }
 
 func getTLSHelloTemplate() *template.Template {
@@ -182,6 +183,20 @@ RemoteAddr:        {{ .Conn.RemoteAddr }}
 	return t
 }
 
+func templateExecute(t *template.Template, data any, wr io.Writer, tolog bool) {
+	var err error
+	err = nil
+	if wr != nil {
+		err = t.Execute(wr, data)
+	}
+	if err == nil && tolog {
+		err = t.Execute(log.Writer(), data)
+	}
+	if err != nil {
+		fmt.Fprintf(wr, err.Error(), http.StatusInternalServerError)
+		log.Printf(err.Error(), http.StatusInternalServerError)
+	}
+}
 func getEnvVarTemplate() *template.Template {
 	const temp = `
 -- Environment --
@@ -297,15 +312,11 @@ func main() {
 
 	envvarsTemplate := getEnvVarTemplate()
 	envvars := getEnvVars(envre)
-	if len(envvars) > 0 && verbose {
-		err := envvarsTemplate.Execute(log.Writer(), envvars)
-		if err != nil {
-			log.Printf(err.Error())
-		}
+	if len(envvars) > 0 {
+		templateExecute(envvarsTemplate, envvars, nil, verbose)
 	}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		var err error
 		if setCookie {
 			cookie := &http.Cookie{
 				Name:  "cookie",
@@ -314,28 +325,13 @@ func main() {
 			http.SetCookie(w, cookie)
 		}
 		if useTLS {
-			err = helloTemplate.Execute(w, addressHelloMap[r.RemoteAddr])
-			if err != nil {
-				fmt.Fprintf(w, err.Error(), http.StatusInternalServerError)
-				log.Printf(err.Error(), http.StatusInternalServerError)
-			}
+			// we set console output to false as hello messages are logged as soon as they arrive
+			templateExecute(helloTemplate, addressHelloMap[r.RemoteAddr], w, false)
 		}
 		if len(envvars) > 0 {
-			err= envvarsTemplate.Execute(w, envvars)
-			if err != nil {
-				fmt.Fprintf(w, err.Error(), http.StatusInternalServerError)
-				log.Printf(err.Error(), http.StatusInternalServerError)
-			} else if verbose {
-				envvarsTemplate.Execute(log.Writer(), envvars)
-			}
+			templateExecute(envvarsTemplate, envvars, w, verbose)
 		}
-		err = httpTemplate.Execute(w, r)
-		if err != nil {
-			fmt.Fprintf(w, err.Error(), http.StatusInternalServerError)
-			log.Printf(err.Error(), http.StatusInternalServerError)
-		} else if  verbose {
-			httpTemplate.Execute(log.Writer(), r)
-		}
+		templateExecute(httpTemplate, r, w, verbose)
 	})
 
 	if useTLS {
@@ -355,10 +351,8 @@ func main() {
 			ClientAuth: tls.RequestClientCert,
 			GetCertificate: func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
 				addressHelloMap[chi.Conn.RemoteAddr().String()] = chi
-				if verbose {
-					// with TLS, log the hello info as soon as it arrives, just in case the connection is aborted
-					helloTemplate.Execute(log.Writer(), chi)
-				}
+				// with TLS, log the hello info as soon as it arrives, just in case the connection is aborted
+				templateExecute(helloTemplate, chi, nil, verbose)
 				return &certificate, nil
 			},
 		}
