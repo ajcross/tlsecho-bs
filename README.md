@@ -1,6 +1,8 @@
 # tlsecho
 
-Simple tls test server that returns (and logs) info about the connection: headers, protocols and a bit more
+Simple https test server that returns (and logs) info about the connection: headers, protocols and a bit more
+
+Supports http 1.0 to 3.0, tls up to 1.3 and regardless the name, it also supports non-tls http access 
 
 ## Build
 
@@ -22,15 +24,17 @@ docker.io/ajcross/tlsecho:latest
 
 ```
 # tlsecho --help
-Usage of tlsecho:
+Usage of /app/tlsecho:
   -addr string
     	service address (default ":8443")
   -cert string
     	Certificate file
   -cn string
-    	cn of the generated certificate (default "localhost")
+    	cn for the automatically generated certificate (default "localhost")
   -env-re string
     	regexp to filter environment variables to output (default "^TLSECHO")
+  -http3
+    	enable http3
   -key string
     	Certificate key file
   -set-cookie

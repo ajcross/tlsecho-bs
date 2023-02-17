@@ -1,3 +1,4 @@
+
 package main
 
 import (
@@ -20,6 +21,9 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
 )
 
 type EnvVar struct {
@@ -28,7 +32,6 @@ type EnvVar struct {
 
 func getEnvVars(res string) []EnvVar {
 	// loads all the env variables that match a regexp
-
 	envvars := []EnvVar{}
 
 	re, err := regexp.Compile(res)
@@ -280,6 +283,7 @@ func main() {
 	var useTLS bool
 	var cn string
 	var setCookie bool
+	var useHttp3 bool
 
 	flag.StringVar(&keyFile, "key", "", "Certificate key file")
 	flag.StringVar(&certFile, "cert", "", "Certificate file")
@@ -287,9 +291,10 @@ func main() {
 	flag.BoolVar(&verbose, "verbose", true, "verbose")
 	flag.BoolVar(&verbose, "v", true, "verbose")
 	flag.BoolVar(&useTLS, "tls", true, "tls")
-	flag.StringVar(&cn, "cn", "localhost", "cn of the generated certificate")
+	flag.StringVar(&cn, "cn", "localhost", "cn for the automatically generated certificate")
 	flag.BoolVar(&setCookie, "set-cookie", true, "set cookie")
 	flag.StringVar(&envre, "env-re", "^TLSECHO", "regexp to filter environment variables to output")
+	flag.BoolVar(&useHttp3, "http3", false, "enable http3")
 
 	flag.Parse()
 	if flag.NArg() != 0 {
@@ -301,8 +306,11 @@ func main() {
 	if keyFile != "" && !useTLS {
 		usageAndExit("tls disabled and tls credentials set is not supported")
 	}
-	if keyFile != "" && cn != "" {
+	if keyFile != "" && cn != "localhost" {
 		usageAndExit("you can't set both cn and certificate files")
+	}
+	if useHttp3 && !useTLS {
+		usageAndExit("http3 requires tls")
 	}
 
 	var addressHelloMap = make(map[string]*tls.ClientHelloInfo)
@@ -324,9 +332,15 @@ func main() {
 			}
 			http.SetCookie(w, cookie)
 		}
+		if useHttp3 {
+			// Set the age to just 60s, since this server is for testing
+                        w.Header().Set( "alt-svc", "h3=\""+addr+"\"; ma=60, h3-29=\""+addr+"\"; ma=60")
+		}
 		if useTLS {
 			// we set console output to false as hello messages are logged as soon as they arrive
-			templateExecute(helloTemplate, addressHelloMap[r.RemoteAddr], w, false)
+			if addressHelloMap[r.RemoteAddr] != nil {
+				templateExecute(helloTemplate, addressHelloMap[r.RemoteAddr], w, false)
+			}
 		}
 		if len(envvars) > 0 {
 			templateExecute(envvarsTemplate, envvars, w, verbose)
@@ -345,9 +359,9 @@ func main() {
 		if err != nil {
 			log.Fatal(err.Error())
 		}
-		var config *tls.Config
+		var tlsconfig *tls.Config
 
-		config = &tls.Config{
+		tlsconfig = &tls.Config{
 			ClientAuth: tls.RequestClientCert,
 			GetCertificate: func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
 				addressHelloMap[chi.Conn.RemoteAddr().String()] = chi
@@ -356,14 +370,23 @@ func main() {
 				return &certificate, nil
 			},
 		}
-		httpServer := &http.Server{
-			Addr:      addr,
-			TLSConfig: config,
-		}
+
+		if useHttp3 {
+			quicConf := &quic.Config{} 
+			http3Server := &http3.Server{
+				Addr:       addr,
+				TLSConfig:  tlsconfig,
+				QuicConfig: quicConf,
+			}
+			go func() {
+				log.Printf("HTTP3 server listening on %s", addr)
+				log.Fatal(http3Server.ListenAndServe())
+			}()
+		} 
 		var ml myListener
 		var l net.Listener
-
 		l, err = net.Listen("tcp", addr)
+
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -372,8 +395,13 @@ func main() {
 			addressHelloMap,
 		}
 
-		log.Printf("HTTPS server listening on %s", addr)
+		httpServer := &http.Server{
+			Addr:      addr,
+			TLSConfig: tlsconfig,
+		}
+		log.Printf("HTTP server listening on %s", addr)
 		log.Fatal(httpServer.ServeTLS(ml, "", ""))
+
 	} else {
 		httpServer := &http.Server{
 			Addr: addr,
