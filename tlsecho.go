@@ -1,4 +1,3 @@
-
 package main
 
 import (
@@ -19,6 +18,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -252,15 +252,19 @@ func usageAndExit(error string) {
 type myListener struct {
 	net.Listener
 	addressHelloMap map[string]*tls.ClientHelloInfo
+	mutex           *sync.RWMutex
 }
 
 type myConn struct {
 	net.Conn
 	addressHelloMap map[string]*tls.ClientHelloInfo
+	mutex           *sync.RWMutex
 }
 
 func (mc myConn) Close() (e error) {
+	mc.mutex.Lock()
 	delete(mc.addressHelloMap, mc.RemoteAddr().String())
+	mc.mutex.Unlock()
 	return net.Conn.Close(mc.Conn)
 }
 
@@ -269,6 +273,7 @@ func (ml myListener) Accept() (net.Conn, error) {
 	mc := myConn{
 		c,
 		ml.addressHelloMap,
+		ml.mutex,
 	}
 	return mc, e
 }
@@ -314,6 +319,7 @@ func main() {
 	}
 
 	var addressHelloMap = make(map[string]*tls.ClientHelloInfo)
+	var mutex sync.RWMutex
 
 	helloTemplate := getTLSHelloTemplate()
 	httpTemplate := getTemplate()
@@ -334,13 +340,15 @@ func main() {
 		}
 		if useHttp3 {
 			// Set the age to just 60s, since this server is for testing
-                        w.Header().Set( "alt-svc", "h3=\""+addr+"\"; ma=60, h3-29=\""+addr+"\"; ma=60")
+			w.Header().Set("alt-svc", "h3=\""+addr+"\"; ma=60, h3-29=\""+addr+"\"; ma=60")
 		}
 		if useTLS {
 			// we set console output to false as hello messages are logged as soon as they arrive
+			mutex.RLock()
 			if addressHelloMap[r.RemoteAddr] != nil {
 				templateExecute(helloTemplate, addressHelloMap[r.RemoteAddr], w, false)
 			}
+			mutex.RUnlock()
 		}
 		if len(envvars) > 0 {
 			templateExecute(envvarsTemplate, envvars, w, verbose)
@@ -364,7 +372,9 @@ func main() {
 		tlsconfig = &tls.Config{
 			ClientAuth: tls.RequestClientCert,
 			GetCertificate: func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+				mutex.Lock()
 				addressHelloMap[chi.Conn.RemoteAddr().String()] = chi
+				mutex.Unlock()
 				// with TLS, log the hello info as soon as it arrives, just in case the connection is aborted
 				templateExecute(helloTemplate, chi, nil, verbose)
 				return &certificate, nil
@@ -372,7 +382,7 @@ func main() {
 		}
 
 		if useHttp3 {
-			quicConf := &quic.Config{} 
+			quicConf := &quic.Config{}
 			http3Server := &http3.Server{
 				Addr:       addr,
 				TLSConfig:  tlsconfig,
@@ -382,7 +392,7 @@ func main() {
 				log.Printf("HTTP3 server listening on %s", addr)
 				log.Fatal(http3Server.ListenAndServe())
 			}()
-		} 
+		}
 		var ml myListener
 		var l net.Listener
 		l, err = net.Listen("tcp", addr)
@@ -393,6 +403,7 @@ func main() {
 		ml = myListener{
 			l,
 			addressHelloMap,
+			&mutex,
 		}
 
 		httpServer := &http.Server{
