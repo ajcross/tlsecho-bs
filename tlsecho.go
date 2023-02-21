@@ -180,7 +180,9 @@ ServerName:        {{ .ServerName }}
 SupportedVersions: {{ range .SupportedVersions }} {{ . | TLSVersion }}{{ end }} 
 SupportedProtos:   {{ range .SupportedProtos }} {{ . }}{{ end }}
 CipherSuites:      {{ range .CipherSuites }} {{ . | CipherSuiteName }}{{ end }}
-RemoteAddr:        {{ .Conn.RemoteAddr }}
+RemoteAddr:        {{ .Conn.RemoteAddr }}/{{ .Conn.RemoteAddr.Network }}
+LocalAddr:         {{ .Conn.LocalAddr }}/{{ .Conn.LocalAddr.Network }}
+
 `
 	t := template.Must(template.New("temp").Funcs(fmap).Parse(temp))
 	return t
@@ -249,22 +251,52 @@ func usageAndExit(error string) {
 	os.Exit(-2)
 }
 
+type tlsHelloMap struct {
+	addressHelloMap map[string]*tls.ClientHelloInfo
+	mutex           sync.RWMutex
+}
+
+func makeTLSHelloMap() *tlsHelloMap {
+	var mutex sync.RWMutex
+	return &tlsHelloMap{
+		make(map[string]*tls.ClientHelloInfo),
+		mutex,
+	}
+}
+func (c *tlsHelloMap) get(addr net.Addr) *tls.ClientHelloInfo {
+	return c.getByAddrNet(addr.String(), addr.Network())
+}
+func (c *tlsHelloMap) getByAddrNet(addr string, network string) *tls.ClientHelloInfo {
+	c.mutex.RLock()
+	cli := c.addressHelloMap[addr+"/"+network]
+	c.mutex.RUnlock()
+	return cli
+}
+
+func (c *tlsHelloMap) set(addr net.Addr, cli *tls.ClientHelloInfo) {
+	c.mutex.Lock()
+	c.addressHelloMap[addr.String()+"/"+addr.Network()] = cli
+	c.mutex.Unlock()
+}
+
+func (c *tlsHelloMap) Delete(nc net.Conn) {
+	c.mutex.Lock()
+	delete(c.addressHelloMap, nc.RemoteAddr().String()+"/"+nc.RemoteAddr().Network())
+	c.mutex.Unlock()
+}
+
 type myListener struct {
 	net.Listener
-	addressHelloMap map[string]*tls.ClientHelloInfo
-	mutex           *sync.RWMutex
+	tlsHelloMap *tlsHelloMap
 }
 
 type myConn struct {
 	net.Conn
-	addressHelloMap map[string]*tls.ClientHelloInfo
-	mutex           *sync.RWMutex
+	tlsHelloMap *tlsHelloMap
 }
 
 func (mc myConn) Close() (e error) {
-	mc.mutex.Lock()
-	delete(mc.addressHelloMap, mc.RemoteAddr().String())
-	mc.mutex.Unlock()
+	mc.tlsHelloMap.Delete(mc)
 	return net.Conn.Close(mc.Conn)
 }
 
@@ -272,8 +304,7 @@ func (ml myListener) Accept() (net.Conn, error) {
 	c, e := net.Listener.Accept(ml.Listener)
 	mc := myConn{
 		c,
-		ml.addressHelloMap,
-		ml.mutex,
+		ml.tlsHelloMap,
 	}
 	return mc, e
 }
@@ -318,8 +349,7 @@ func main() {
 		usageAndExit("http3 requires tls")
 	}
 
-	var addressHelloMap = make(map[string]*tls.ClientHelloInfo)
-	var mutex sync.RWMutex
+	th := makeTLSHelloMap()
 
 	helloTemplate := getTLSHelloTemplate()
 	httpTemplate := getTemplate()
@@ -344,11 +374,10 @@ func main() {
 		}
 		if useTLS {
 			// we set console output to false as hello messages are logged as soon as they arrive
-			mutex.RLock()
-			if addressHelloMap[r.RemoteAddr] != nil {
-				templateExecute(helloTemplate, addressHelloMap[r.RemoteAddr], w, false)
+			var cli = th.getByAddrNet(r.RemoteAddr, r.Context().Value(http.LocalAddrContextKey).(net.Addr).Network())
+			if cli != nil {
+				templateExecute(helloTemplate, cli, w, false)
 			}
-			mutex.RUnlock()
 		}
 		if len(envvars) > 0 {
 			templateExecute(envvarsTemplate, envvars, w, verbose)
@@ -372,9 +401,7 @@ func main() {
 		tlsconfig = &tls.Config{
 			ClientAuth: tls.RequestClientCert,
 			GetCertificate: func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
-				mutex.Lock()
-				addressHelloMap[chi.Conn.RemoteAddr().String()] = chi
-				mutex.Unlock()
+			        th.set(chi.Conn.RemoteAddr(), chi)
 				// with TLS, log the hello info as soon as it arrives, just in case the connection is aborted
 				templateExecute(helloTemplate, chi, nil, verbose)
 				return &certificate, nil
@@ -400,10 +427,10 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+
 		ml = myListener{
 			l,
-			addressHelloMap,
-			&mutex,
+			th,
 		}
 
 		httpServer := &http.Server{
