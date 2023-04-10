@@ -4,6 +4,9 @@ metadata:
   name: tlsecho-bs
   annotations:
     github.com/project-slug: ajcross/tlsecho-bs
+    backstage.io/techdocs-ref: dir:.
+
+
 spec:
   type: other
   lifecycle: unknown
